@@ -1,0 +1,50 @@
+package common
+
+import (
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+)
+
+// GetRootDir 获取执行路径
+func GetRootDir() string {
+	// 文件不存在获取执行路径
+	file, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		file = fmt.Sprintf(".%s", string(os.PathSeparator))
+	} else {
+		file = fmt.Sprintf("%s%s", file, string(os.PathSeparator))
+	}
+	return file
+}
+
+// PathExists 判断文件或目录是否存在
+func PathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// Md5 计算字符串md5值
+func Md5(s string) string {
+	h := md5.New()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// GetHttpToInt 获取请求参数，转为int
+func GetHttpToInt(c *gin.Context, name string) int {
+	valStr := c.Query(name)
+	val, _ := strconv.Atoi(valStr)
+	return val
+}
