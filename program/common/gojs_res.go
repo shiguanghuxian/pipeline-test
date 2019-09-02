@@ -1,8 +1,8 @@
 package common
 
 import (
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 
 	"github.com/dop251/goja"
@@ -18,16 +18,18 @@ type JsRes struct {
 	util     *goja.Object
 	res      *http.Response
 	httpTool *HttpTool
-	// TODO 日志写每次生命周期
+	logger   *TaskLog // 日志对象，会输出到websocket
 }
 
 // js调用获取响应头信息
 func (c *JsRes) getHeader(call goja.FunctionCall) goja.Value {
 	if len(call.Arguments) < 1 {
-		log.Println("参数cookie名不能为空")
+		c.logger.Log("获取头信息，参数header名不能为空")
 		return c.runtime.ToValue("")
 	}
-	val := c.res.Header.Get(call.Arguments[0].String())
+	name := call.Arguments[0].String()
+	val := c.res.Header.Get(name)
+	c.logger.Log(fmt.Sprintf("获取头信息成功 %s:%s", name, val))
 	return c.runtime.ToValue(val)
 }
 
@@ -43,28 +45,30 @@ func (c *JsRes) cookies(call goja.FunctionCall) goja.Value {
 // js 调用获取一个cookie
 func (c *JsRes) getCookie(call goja.FunctionCall) goja.Value {
 	if len(call.Arguments) < 1 {
-		log.Println("参数cookie名不能为空")
+		c.logger.Log("获取cookie，参数cookie名不能为空")
 		return c.runtime.ToValue("")
 	}
+	name := call.Arguments[0].String()
 	for _, v := range c.res.Cookies() {
-		if call.Arguments[0].String() == v.Name {
-			if v == nil {
-				return c.runtime.ToValue("")
-			}
+		if name == v.Name {
+			c.logger.Log(fmt.Sprintf("获取cookie成功 %s:%s", name, v.Value))
 			return c.runtime.ToValue(v.Value)
 		}
 	}
+	c.logger.Log(fmt.Sprintf("获取cookie成功 %s:空", name))
 	return c.runtime.ToValue("")
 }
 
 // getBody js获取响应数据
 func (c *JsRes) getBody(call goja.FunctionCall) goja.Value {
 	body, _ := ioutil.ReadAll(c.res.Body)
+	c.logger.Log("获取body成功: " + string(body))
 	return c.runtime.ToValue(string(body))
 }
 
 // getBody js获取响应数据
 func (c *JsRes) getStatusCode(call goja.FunctionCall) goja.Value {
+	c.logger.Log(fmt.Sprintf("获取状态码成功: %d", c.res.StatusCode))
 	return c.runtime.ToValue(c.res.StatusCode)
 }
 
@@ -88,9 +92,10 @@ func (c *JsRes) Enable(runtime *goja.Runtime) {
 }
 
 // NewJsRes 创建请求插件
-func NewJsRes(res *http.Response, httpTool *HttpTool) *JsRes {
+func NewJsRes(res *http.Response, httpTool *HttpTool, logger *TaskLog) *JsRes {
 	return &JsRes{
 		res:      res,
 		httpTool: httpTool,
+		logger:   logger,
 	}
 }

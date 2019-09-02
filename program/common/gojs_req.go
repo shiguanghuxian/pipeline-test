@@ -1,8 +1,8 @@
 package common
 
 import (
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strings"
 
@@ -19,14 +19,14 @@ type JsReq struct {
 	util     *goja.Object
 	req      *http.Request
 	httpTool *HttpTool
-	// TODO 日志写每次生命周期
+	logger   *TaskLog // 日志对象，会输出到websocket
 }
 
 // js调用设置头信息
 func (c *JsReq) header(call goja.FunctionCall) goja.Value {
 	// 读取调用参数
 	if len(call.Arguments) != 2 {
-		log.Println("参数必须是两个")
+		c.logger.Log("设置头信息，参数必须是2个")
 		return c.runtime.ToValue(false)
 	}
 	key := call.Arguments[0].String()
@@ -34,6 +34,7 @@ func (c *JsReq) header(call goja.FunctionCall) goja.Value {
 	// log.Println(key, val)
 	// 设置头信息
 	c.req.Header.Set(key, val)
+	c.logger.Log("头信息设置成功")
 	return c.runtime.ToValue(true)
 }
 
@@ -50,24 +51,24 @@ func (c *JsReq) cookies(call goja.FunctionCall) goja.Value {
 // js 调用获取一个cookie
 func (c *JsReq) getCookie(call goja.FunctionCall) goja.Value {
 	if len(call.Arguments) < 1 {
-		log.Println("参数cookie名不能为空")
+		c.logger.Log("获取cookie，参数cookie名不能为空")
 		return c.runtime.ToValue("")
 	}
+	name := call.Arguments[0].String()
 	for _, v := range c.httpTool.Cookies {
-		if call.Arguments[0].String() == v.Name {
-			if v == nil {
-				return c.runtime.ToValue("")
-			}
+		if name == v.Name {
+			c.logger.Log(fmt.Sprintf("获取cookie值 %s:%s", name, v.Value))
 			return c.runtime.ToValue(v.Value)
 		}
 	}
+	c.logger.Log(fmt.Sprintf("获取cookie值 %s:空", name))
 	return c.runtime.ToValue("")
 }
 
 // 第一个参数为body内容，第二参数为请求体类型 0 json 1 from 默认0
 func (c *JsReq) setBody(call goja.FunctionCall) goja.Value {
 	if len(call.Arguments) < 1 {
-		log.Println("参数body必传")
+		c.logger.Log("设置body，参数必传body内容")
 		return c.runtime.ToValue(false)
 	}
 	// 如果body是form类型，则必须传递map类型参数
@@ -77,18 +78,20 @@ func (c *JsReq) setBody(call goja.FunctionCall) goja.Value {
 		bodyStr := call.Arguments[0].String()
 		c.req.Body = ioutil.NopCloser(strings.NewReader(bodyStr))
 	}
+	c.logger.Log("body设置成功")
 	return c.runtime.ToValue(true)
 }
 
 // 设置BasicAuth
 func (c *JsReq) setBasicAuth(call goja.FunctionCall) goja.Value {
 	if len(call.Arguments) < 2 {
-		log.Println("参数用户名和密码不能为空")
+		c.logger.Log("设置BasicAuth，参数用户名和密码不能为空")
 		return c.runtime.ToValue(false)
 	}
 	username := call.Arguments[0].String()
 	password := call.Arguments[1].String()
 	c.req.SetBasicAuth(username, password)
+	c.logger.Log(fmt.Sprintf("设置BasicAuth成功 username:%s password:%s", username, password))
 	return c.runtime.ToValue(true)
 }
 
@@ -110,9 +113,10 @@ func (c *JsReq) Enable(runtime *goja.Runtime) {
 }
 
 // NewJsReq 创建请求插件
-func NewJsReq(req *http.Request, httpTool *HttpTool) *JsReq {
+func NewJsReq(req *http.Request, httpTool *HttpTool, logger *TaskLog) *JsReq {
 	return &JsReq{
 		req:      req,
 		httpTool: httpTool,
+		logger:   logger,
 	}
 }

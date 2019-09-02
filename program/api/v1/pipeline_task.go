@@ -1,18 +1,20 @@
 package v1
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/require"
-	"github.com/shiguanghuxian/pipeline-test/program/logger"
-
 	gin "github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/shiguanghuxian/pipeline-test/program/common"
+	"github.com/shiguanghuxian/pipeline-test/program/logger"
 	"github.com/shiguanghuxian/pipeline-test/program/models"
 )
 
@@ -58,28 +60,56 @@ func (api *PipelineTaskController) RunTask(c *gin.Context) {
 	}
 	// 遍历执行api测试
 	httpTool := common.NewHttpTool(projectInfo.BaseUrl)
-	// logBuffer := bytes.NewBuffer(nil) // TODO 记录执行日志 开始请求xxx等
-	for _, v := range pipelineTasks {
-		apiOne, ok := apiMap[v.ApiId]
-		if ok == false {
-			logger.Log.Warnw("流水线中不存在api", "api_id", v.ApiId)
-			continue
+	taskLog := common.NewTaskLog()              // 日志对象
+	taskId := fmt.Sprint(time.Now().UnixNano()) // 本地任务id
+	taskLogMap.Store(taskId, taskLog)           // 记录日志对象到map
+
+	// 逐条执行api测试列表
+	go func() {
+		for _, v := range pipelineTasks {
+			apiOne, ok := apiMap[v.ApiId]
+			if ok == false {
+				logger.Log.Warnw("流水线中不存在api", "api_id", v.ApiId)
+				taskLog.Log(fmt.Sprintf("流水线中不存在api api_id:%d", v.ApiId))
+				continue
+			}
+			proper, err := api.runOneTask(httpTool, v, apiOne, taskLog, taskId)
+			if err != nil {
+				logger.Log.Errorw("终止执行，调用接口遇到错误", "err", err)
+				taskLog.Log(fmt.Sprintf("终止执行，调用接口遇到错误 err:%s", err.Error()))
+				return
+			}
+			if proper == false {
+				logger.Log.Errorw("终止执行，执行一个api调用未达到预期", "err", err)
+				taskLog.Log(fmt.Sprintf("终止执行，执行一个api调用未达到预期 name: %s pipeline_task_id:%d", v.Name, v.Id))
+				return
+			}
 		}
-		proper, err := api.runOneTask(httpTool, v, apiOne)
+		// 归档所有日志到MySQL
+		logs := taskLog.AllLogs()
+		logsBytes, _ := json.Marshal(logs)
+		err = (&models.TaskLogPlaceModel{
+			TaskId:     taskId,
+			PipelineId: pipelineId,
+			Log:        string(logsBytes),
+		}).Save()
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err})
-			return
+			logger.Log.Errorw("归档日志到数据库错误", "err", err)
+			taskLog.Log("归档日志到数据库错误: " + err.Error())
 		}
-		if proper == false {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "预期验证返回false"})
-			return
-		}
-	}
+		// 执行完毕关闭日志
+		taskLog.Close()
+	}()
+
 	log.Println(pipelineTasks)
-	c.JSON(http.StatusOK, "ok")
+	c.JSON(http.StatusOK, gin.H{
+		"task_id": taskId,
+		"tasks":   pipelineTasks,
+	})
 }
 
 const (
+	// 默认断言判断
 	DefaultExpect = `
 	function expect() {
 		var code = response.getStatusCode()
@@ -92,26 +122,29 @@ const (
 	`
 )
 
-func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelineTask *models.PipelineTaskModel, apiOne *models.ApiModel) (proper bool, err error) {
+var (
+	taskLogMap = new(sync.Map) // 存储task日志对象
+)
+
+func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelineTask *models.PipelineTaskModel, apiOne *models.ApiModel, taskLog *common.TaskLog, taskId string) (proper bool, err error) {
 	if pipelineTask == nil || apiOne == nil {
-		err = errors.New("参数不能为nil")
+		err = errors.New("runOneTask 参数不能为nil")
 		proper = false
 		return
 	}
-
 	// 构建js解析器
 	vm := goja.New()
 	new(require.Registry).Enable(vm)
 	// 日志对象
-	common.NewConsole().Enable(vm)
+	common.NewConsole(taskLog).Enable(vm)
 
 	// 设置请求前后钩子
-	httpTool.SetBefore(api.caHttpBefore(vm, pipelineTask.Before))
-	httpTool.SetAfter(api.caHttpAfter(vm, pipelineTask.After))
+	httpTool.SetBefore(api.caHttpBefore(vm, pipelineTask.Before, taskLog))
+	httpTool.SetAfter(api.caHttpAfter(vm, pipelineTask.After, taskLog))
 	log.Println("开始请求接口", apiOne.Uri)
 
 	// 执行编号
-	taskId := fmt.Sprint(time.Now().UnixNano())
+
 	var httpCode int
 	var body []byte
 	start := time.Now()
@@ -128,6 +161,9 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 		return
 	}
 	end := time.Now()
+	if err != nil {
+		return
+	}
 
 	// 预期验证逻辑
 	if pipelineTask.Expect == "" {
@@ -137,18 +173,26 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 	v, err := vm.RunString(pipelineTask.Expect)
 	if err != nil {
 		log.Println("运行预期js错误", err.Error())
+		proper = false
+		taskLog.Log(fmt.Sprintf("计算预期，运行预期js错误 name: %s", pipelineTask.Name))
 	}
+	expect := 0 // 是否达到预期
 	obj := v.Export()
 	if val, ok := obj.(bool); ok {
 		if val == true {
 			log.Println("执行预期js返回true")
+			expect = 1
+			proper = true
 		} else {
 			log.Println("执行预期js返回false")
+			proper = false
+			taskLog.Log(fmt.Sprintf("计算预期，运行js返回false name: %s", pipelineTask.Name))
 		}
 	} else {
 		log.Println("执行预期未返回true或false js结果: ", obj)
 		err = fmt.Errorf("执行预期未返回true或false js结果: %v", obj)
 		proper = false
+		taskLog.Log(fmt.Sprintf("执行预期未返回true或false name: %s", pipelineTask.Name))
 		return
 	}
 
@@ -161,7 +205,7 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 		Req:        pipelineTask.Req,
 		Rsp:        string(body),
 		HttpCode:   httpCode,
-		Expect:     1,
+		Expect:     expect,
 		Duration:   end.Sub(start).String(),
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -170,48 +214,49 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 	if err != nil {
 		logger.Log.Errorw("保存日志错误", "err", err)
 		proper = false
+		taskLog.Log(fmt.Sprintf("保存api执行日志错误 name: %s", pipelineTask.Name))
 		return
 	}
 	return
 }
 
 // 请求之前做一件事
-func (api *PipelineTaskController) caHttpBefore(vm *goja.Runtime, js string) common.BeforeFunc {
+func (api *PipelineTaskController) caHttpBefore(vm *goja.Runtime, js string, taskLog *common.TaskLog) common.BeforeFunc {
 	if len(js) == 0 {
 		log.Println("调用请求之前钩子，js代码段为空")
 		return common.DefaultBeforeFunc
 	}
 	return func(tool *common.HttpTool, req *http.Request) {
 		// 构造js执行对象
-		jsReq := common.NewJsReq(req, tool)
+		jsReq := common.NewJsReq(req, tool, taskLog)
 		jsReq.Enable(vm)
 
 		v, err := vm.RunString(js)
 		if err != nil {
-			log.Println("运行js错误", err.Error())
+			taskLog.Log(fmt.Sprintf("运行调用前钩子错误 err:%s", err.Error()))
 		}
 		obj := v.Export()
 		if val, ok := obj.(bool); ok {
 			if val == true {
-				log.Println("执行js返回true")
+				taskLog.Log("运行调用前钩子返回true")
 			} else {
-				log.Println("执行js返回false")
+				taskLog.Log("运行调用前钩子返回false")
 			}
 		} else {
-			log.Println("执行js结果: ", obj)
+			taskLog.Log(fmt.Sprintf("运行调用前钩子返回 %v", obj))
 		}
 	}
 }
 
 // 请求之后做一件事
-func (api *PipelineTaskController) caHttpAfter(vm *goja.Runtime, js string) common.AfterFunc {
+func (api *PipelineTaskController) caHttpAfter(vm *goja.Runtime, js string, taskLog *common.TaskLog) common.AfterFunc {
 	if len(js) == 0 {
 		log.Println("调用请求之前钩子，js代码段为空")
 		return common.DefaultAfterFunc
 	}
 	return func(tool *common.HttpTool, req *http.Response) {
 		// 构造js执行对象
-		jsRes := common.NewJsRes(req, tool)
+		jsRes := common.NewJsRes(req, tool, taskLog)
 		jsRes.Enable(vm)
 
 		v, err := vm.RunString(js)
@@ -221,12 +266,78 @@ func (api *PipelineTaskController) caHttpAfter(vm *goja.Runtime, js string) comm
 		obj := v.Export()
 		if val, ok := obj.(bool); ok {
 			if val == true {
-				log.Println("执行js返回true")
+				taskLog.Log("运行调用后钩子返回true")
 			} else {
-				log.Println("执行js返回false")
+				taskLog.Log("运行调用后钩子返回false")
 			}
 		} else {
-			log.Println("执行js结果: ", obj)
+			taskLog.Log(fmt.Sprintf("运行调用前钩子返回 %v", obj))
+		}
+	}
+}
+
+// WsConsumerData websocket 订阅日志消息
+type WsConsumerData struct {
+	Typ     string `json:"type"` // 消息类型 ping | consumer | unconsumer
+	Payload string `json:"payload"`
+}
+
+// ConsumerData 订阅消息
+type ConsumerData struct {
+	TaskId string `json:"task_id"` // task id 订阅的执行查询日志
+}
+
+var wsupgrader = websocket.Upgrader{
+	ReadBufferSize:   1024,
+	WriteBufferSize:  1024,
+	HandshakeTimeout: 5 * time.Second,
+	// 取消ws跨域校验
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+// WsConsumer 订阅task日志输出
+func (api *PipelineTaskController) WsConsumer(c *gin.Context) {
+	var conn *websocket.Conn
+	var err error
+	conn, err = wsupgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		logger.Log.Errorw("未成功升级未为websocket", "err", err)
+		return
+	}
+	// 连接关闭时，删除连接订阅
+	defer func() {
+		taskLogMap.Range(func(key, value interface{}) bool {
+			if taskLog, ok := value.(*common.TaskLog); ok {
+				taskLog.RemoveConn(conn)
+			}
+			return true
+		})
+	}()
+
+	for {
+		//读取ws中的数据
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			logger.Log.Errorw("websocket接收消息错误", "err", err)
+			break
+		}
+		// 解析消息
+		wsData := new(WsConsumerData)
+		err = json.Unmarshal(message, wsData)
+		if err != nil {
+			logger.Log.Errorw("解析websocket消息错误", "err", err)
+			continue
+		}
+		if wsData.Typ == "ping" {
+			log.Println("收到客户端ping")
+		} else if wsData.Typ == "consumer" {
+
+		} else if wsData.Typ == "unconsumer" {
+
+		} else {
+			log.Println("未知消息类型")
 		}
 	}
 }

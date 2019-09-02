@@ -12,5 +12,7 @@ type APIV1 struct {
 func (v1 *APIV1) Register(router *gin.RouterGroup) {
 	ptg := router.Group("/keys")
 	pipelineTaskController := new(PipelineTaskController)
-	ptg.GET("/runTask", pipelineTaskController.RunTask) // 运行流水线
+	ptg.GET("/runTask", pipelineTaskController.RunTask)       // 运行流水线
+	ptg.GET("/wsConsumer", pipelineTaskController.WsConsumer) // 订阅流水线消息
+
 }

@@ -1,9 +1,11 @@
 package program
 
 import (
+	"fmt"
 	"net/http"
 	"os/exec"
 	"runtime"
+	"time"
 
 	"github.com/shiguanghuxian/pipeline-test/program/api"
 	v1 "github.com/shiguanghuxian/pipeline-test/program/api/v1"
@@ -57,11 +59,11 @@ func (p *Program) Run() error {
 	// 启动http服务
 	go p.startAPI()
 
-	// // 打开浏览器
-	// go func() {
-	// 	time.Sleep(100 * time.Millisecond)
-	// 	openURL(fmt.Sprintf("http://127.0.0.1:%d/ui/", p.cfg.HTTP.Port))
-	// }()
+	// 打开浏览器
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		openURL(fmt.Sprintf("http://127.0.0.1:%d/ui/", p.cfg.HTTP.Port))
+	}()
 
 	return nil
 }

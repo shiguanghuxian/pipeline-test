@@ -11,19 +11,19 @@ import (
 type Console struct {
 	runtime *goja.Runtime
 	util    *goja.Object
-	// TODO task执行日志
+	logger  *TaskLog // 日志对象，会输出到websocket
 }
 
 func (c *Console) log(call goja.FunctionCall) goja.Value {
 	if format, ok := goja.AssertFunction(c.util.Get("format")); ok {
 		ret, err := format(c.util, call.Arguments...)
 		if err != nil {
-			panic(err)
+			c.logger.Log("日志输出错误: " + err.Error())
+			return nil
 		}
-
-		log.Print(ret.String())
+		log.Println(ret.String())
 	} else {
-		panic(c.runtime.NewTypeError("util.format is not a function"))
+		c.logger.Log("日志输出错误: util.format is not a function")
 	}
 
 	return nil
@@ -46,6 +46,8 @@ func (c *Console) Enable(runtime *goja.Runtime) {
 }
 
 // NewConsole 创建日志对象
-func NewConsole() *Console {
-	return &Console{}
+func NewConsole(logger *TaskLog) *Console {
+	return &Console{
+		logger: logger,
+	}
 }

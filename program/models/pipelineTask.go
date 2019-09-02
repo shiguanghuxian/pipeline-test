@@ -30,6 +30,6 @@ func (PipelineTaskModel) TableName() string {
 
 // QueryByPipelineId 根据流水线id 查询任务列表
 func (m *PipelineTaskModel) QueryByPipelineId(pipelineId int) (list []*PipelineTaskModel, err error) {
-	err = client.Table(m.TableName()).Where("pipeline_id = ?", pipelineId).Scan(&list).Error
+	err = client.Table(m.TableName()).Where("pipeline_id = ?", pipelineId).Order("sort asc, id asc").Scan(&list).Error
 	return
 }
