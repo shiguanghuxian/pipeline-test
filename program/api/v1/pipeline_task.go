@@ -60,8 +60,8 @@ func (api *PipelineTaskController) RunTask(c *gin.Context) {
 	}
 	// 遍历执行api测试
 	httpTool := common.NewHttpTool(projectInfo.BaseUrl)
-	taskLog := common.NewTaskLog()              // 日志对象
 	taskId := fmt.Sprint(time.Now().UnixNano()) // 本地任务id
+	taskLog := common.NewTaskLog(taskId)        // 日志对象
 	taskLogMap.Store(taskId, taskLog)           // 记录日志对象到map
 
 	// 逐条执行api测试列表
@@ -101,7 +101,6 @@ func (api *PipelineTaskController) RunTask(c *gin.Context) {
 		taskLog.Close()
 	}()
 
-	log.Println(pipelineTasks)
 	c.JSON(http.StatusOK, gin.H{
 		"task_id": taskId,
 		"tasks":   pipelineTasks,
@@ -132,6 +131,7 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 		proper = false
 		return
 	}
+	time.Sleep(time.Second / 2)
 	// 构建js解析器
 	vm := goja.New()
 	new(require.Registry).Enable(vm)
@@ -177,23 +177,36 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 		taskLog.Log(fmt.Sprintf("计算预期，运行预期js错误 name: %s", pipelineTask.Name))
 	}
 	expect := 0 // 是否达到预期
-	obj := v.Export()
-	if val, ok := obj.(bool); ok {
-		if val == true {
-			log.Println("执行预期js返回true")
-			expect = 1
-			proper = true
-		} else {
-			log.Println("执行预期js返回false")
-			proper = false
-			taskLog.Log(fmt.Sprintf("计算预期，运行js返回false name: %s", pipelineTask.Name))
-		}
-	} else {
-		log.Println("执行预期未返回true或false js结果: ", obj)
-		err = fmt.Errorf("执行预期未返回true或false js结果: %v", obj)
+	if v == nil {
+		log.Println("执行预期js返回 v=nil")
 		proper = false
-		taskLog.Log(fmt.Sprintf("执行预期未返回true或false name: %s", pipelineTask.Name))
-		return
+		taskLog.Log(fmt.Sprintf("计算预期，运行js返回 v=nil name: %s", pipelineTask.Name))
+	} else {
+		obj := v.Export()
+		if val, ok := obj.(bool); ok {
+			if val == true {
+				log.Println("执行预期js返回true")
+				expect = 1
+				proper = true
+			} else {
+				log.Println("执行预期js返回false")
+				proper = false
+				taskLog.Log(fmt.Sprintf("计算预期，运行js返回false name: %s", pipelineTask.Name))
+			}
+			// 发送接口达到预期消息
+			expectMsg := make(map[string]interface{}, 0)
+			expectMsg["api_id"] = pipelineTask.ApiId
+			expectMsg["id"] = pipelineTask.Id
+			expectMsg["expect"] = val
+			expectMsgBytes, _ := json.Marshal(expectMsg)
+			taskLog.Log(string(expectMsgBytes), "task_state")
+		} else {
+			log.Println("执行预期未返回true或false js结果: ", obj)
+			err = fmt.Errorf("执行预期未返回true或false js结果: %v", obj)
+			proper = false
+			taskLog.Log(fmt.Sprintf("执行预期未返回true或false name: %s", pipelineTask.Name))
+			return
+		}
 	}
 
 	// 写执行日志
@@ -271,7 +284,7 @@ func (api *PipelineTaskController) caHttpAfter(vm *goja.Runtime, js string, task
 				taskLog.Log("运行调用后钩子返回false")
 			}
 		} else {
-			taskLog.Log(fmt.Sprintf("运行调用前钩子返回 %v", obj))
+			taskLog.Log(fmt.Sprintf("运行调用后钩子返回 %v", obj))
 		}
 	}
 }
@@ -323,6 +336,7 @@ func (api *PipelineTaskController) WsConsumer(c *gin.Context) {
 			logger.Log.Errorw("websocket接收消息错误", "err", err)
 			break
 		}
+		// log.Println("收到消息", string(message))
 		// 解析消息
 		wsData := new(WsConsumerData)
 		err = json.Unmarshal(message, wsData)
@@ -331,13 +345,31 @@ func (api *PipelineTaskController) WsConsumer(c *gin.Context) {
 			continue
 		}
 		if wsData.Typ == "ping" {
-			log.Println("收到客户端ping")
+			// log.Println("收到客户端ping")
 		} else if wsData.Typ == "consumer" {
-
+			cData := new(ConsumerData)
+			err = json.Unmarshal([]byte(wsData.Payload), cData)
+			if err != nil {
+				logger.Log.Errorw("订阅消息解析错误", "err", err)
+			}
+			// 将websocket连接放入日志连接列表
+			if taskOne, ok := taskLogMap.Load(cData.TaskId); ok == true {
+				if taskLog, ok := taskOne.(*common.TaskLog); ok == true {
+					taskLog.AppendConn(conn)
+				} else {
+					logger.Log.Warnw("taskLogMap取值类型断言粗我")
+				}
+			} else {
+				logger.Log.Warnw("订阅的task_id不存在")
+			}
 		} else if wsData.Typ == "unconsumer" {
-
+			cData := new(ConsumerData)
+			err = json.Unmarshal([]byte(wsData.Payload), cData)
+			if err != nil {
+				logger.Log.Errorw("取消订阅消息解析错误", "err", err)
+			}
 		} else {
-			log.Println("未知消息类型")
+			logger.Log.Errorw("未知消息类型")
 		}
 	}
 }

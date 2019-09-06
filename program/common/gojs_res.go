@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -62,7 +63,8 @@ func (c *JsRes) getCookie(call goja.FunctionCall) goja.Value {
 // getBody js获取响应数据
 func (c *JsRes) getBody(call goja.FunctionCall) goja.Value {
 	body, _ := ioutil.ReadAll(c.res.Body)
-	c.logger.Log("获取body成功: " + string(body))
+	c.res.Body = ioutil.NopCloser(bytes.NewReader(body))
+	// c.logger.Log("获取body成功: " + string(body))
 	return c.runtime.ToValue(string(body))
 }
 

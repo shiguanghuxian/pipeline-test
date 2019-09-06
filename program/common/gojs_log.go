@@ -21,6 +21,7 @@ func (c *Console) log(call goja.FunctionCall) goja.Value {
 			c.logger.Log("日志输出错误: " + err.Error())
 			return nil
 		}
+		c.logger.Log(ret.String())
 		log.Println(ret.String())
 	} else {
 		c.logger.Log("日志输出错误: util.format is not a function")

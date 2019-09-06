@@ -47,9 +47,6 @@
 </template>
 
 <script>
-import { SERVER } from "@/api/server.js";
-import { bus } from "@/page/bus.js";
-
 export default {
   data() {
     return {
@@ -117,14 +114,7 @@ export default {
 
     // 获取etcd server列表
     getEtcdServers() {
-      SERVER.GetEtcdServerList().then(response => {
-        this.etcdServers = response.data || [];
-        if(this.EtcdName == '' && this.etcdServers.length > 0){
-          this.EtcdName = this.etcdServers[0].name;
-          localStorage.setItem("EtcdID", this.etcdServers[0].id);
-          localStorage.setItem("EtcdName", this.etcdServers[0].name);
-        }
-      });
+
     },
 
     // 选择etcd服务
@@ -140,17 +130,11 @@ export default {
         }
       });
       console.log(item);
-      bus.$emit('etcd-server-selected', item);
     }
 
   },
   mounted() {
-    this.getEtcdServers();
-    // 加载用户信息
-    let loginInfoStr = sessionStorage.getItem('login-info');
-    if(loginInfoStr){
-      this.username = JSON.parse(loginInfoStr).username;
-    }
+
   },
   created() {
     let lang = localStorage.getItem("etcd-language") || "en";

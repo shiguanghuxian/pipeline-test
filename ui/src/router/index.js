@@ -11,29 +11,9 @@ export default new Router({
     component: CloudHome,
     children: [
       {
-        path: '/key/kv',
-        name: 'KV',
-        component: () => import('@/page/KV'),
-      },
-      {
-        path: '/server/members',
-        name: 'Members',
-        component: () => import('@/page/Members'),
-      },
-      {
-        path: '/setings/EtcdServers',
-        name: 'EtcdServers',
-        component: () => import('@/page/EtcdServers'),
-      },
-      {
-        path: '/setings/user',
-        name: 'User',
-        component: () => import('@/page/User'),
-      },
-      {
-        path: '/setings/role',
-        name: 'Role',
-        component: () => import('@/page/Role'),
+        path: '/key/Pipeline',
+        name: 'Pipeline',
+        component: () => import('@/page/Pipeline'),
       }
       
     ]

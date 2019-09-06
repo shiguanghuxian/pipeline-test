@@ -12,3 +12,7 @@
 *.out
 *.log
 bin/pipeline-test
+dist/
+node_modules/
+*.log
+.DS_Store

@@ -17,7 +17,6 @@
           class="item-menu-wrapper"
           v-for="(unfoldItem,unfoldItemIndex) in menuList"
           :key="unfoldItemIndex"
-          v-if="unfoldItem.main_memu_id != 1 || loginInfo.role_id == 1"
         >
           <div class="item-menu-title" @click="unfoldItemMenu(unfoldItem,unfoldItemIndex)">
             <div v-if="unfoldItem.submenuList.length > 0">
@@ -63,52 +62,45 @@
 export default {
   data() {
     return {
-      loginInfo: { role_id: 0 },
       isUnfold: false, // 判断展开还是隐藏一级菜单,
       unfoldItemMenuIndex: 0, // 判断展开还是隐藏一个菜单列表
       menuList: [
         {
           main_memu_id: 0,
-          mainTitle: this.$t("sideBar.oneEtcd"),
+          mainTitle: this.$t("流水线"),
           submenuList: [
             {
-              submenuTitle: this.$t("sideBar.KV"),
+              submenuTitle: '流水线列表',
               icon: "logo-buffer",
               submenuID: 0,
-              path: "/key/kv"
-            },
-            {
-              submenuTitle: this.$t("sideBar.MEMBERS"),
-              icon: "ios-desktop",
-              submenuID: 1,
-              path: "/server/members"
+              path: "/key/Pipeline"
             }
           ]
         },
-        {
-          main_memu_id: 1,
-          mainTitle: this.$t("sideBar.Setings"),
-          submenuList: [
-            {
-              submenuTitle: this.$t("sideBar.EtcdServers"),
-              submenuID: 0,
-              icon: "md-filing",
-              path: "/setings/EtcdServers"
-            },
-            {
-              submenuTitle: this.$t("sideBar.User"),
-              submenuID: 1,
-              icon: "ios-contact",
-              path: "/setings/user"
-            },
-            {
-              submenuTitle: this.$t("sideBar.Role"),
-              submenuID: 2,
-              icon: "ios-people",
-              path: "/setings/role"
-            }
-          ]
-        }
+        // {
+        //   main_memu_id: 1,
+        //   mainTitle: this.$t("sideBar.Setings"),
+        //   submenuList: [
+        //     {
+        //       submenuTitle: this.$t("sideBar.EtcdServers"),
+        //       submenuID: 0,
+        //       icon: "md-filing",
+        //       path: "/setings/EtcdServers"
+        //     },
+        //     {
+        //       submenuTitle: this.$t("sideBar.User"),
+        //       submenuID: 1,
+        //       icon: "ios-contact",
+        //       path: "/setings/user"
+        //     },
+        //     {
+        //       submenuTitle: this.$t("sideBar.Role"),
+        //       submenuID: 2,
+        //       icon: "ios-people",
+        //       path: "/setings/role"
+        //     }
+        //   ]
+        // }
       ]
     };
   },
@@ -155,12 +147,6 @@ export default {
   },
   created() {},
   mounted() {
-    // 加载用户信息
-    let loginInfoStr = sessionStorage.getItem("login-info");
-    if (loginInfoStr) {
-      this.loginInfo = JSON.parse(loginInfoStr);
-    }
-
     if (sessionStorage.getItem("isUnfold")) {
       if (sessionStorage.getItem("isUnfold") == 1) {
         this.isUnfold = true;
@@ -181,28 +167,7 @@ export default {
         ].parentNode.parentNode.getAttribute("unfoldItemIndex");
       }, 300);
     }
-    // if (sessionStorage.getItem("submenuID")) {
-    //   setTimeout(() => {
-    //     let submenuObj = document.getElementsByClassName("submenu");
-    //     console.log(submenuObj.length);
-        
-    //     for (let i = 0; i < submenuObj.length; i++) {
-    //       submenuObj[i].className = "submenu";
-    //     }
-    //     let index = Number(sessionStorage.getItem("submenuID"));
-    //     submenuObj[index].className = "submenu submenu-active";
-    //     this.menuList.map(v => {
-    //       v.submenuList.map(vm => {
-    //         if (
-    //           vm.submenuID ==
-    //           Number(sessionStorage.getItem("submenuID")) + 1
-    //         ) {
-    //           this.subMenuList = vm.submenuItemList;
-    //         }
-    //       });
-    //     });
-    //   }, 300);
-    // }
+    
   }
 };
 </script>

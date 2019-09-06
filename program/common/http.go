@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -71,6 +72,7 @@ func (tool *HttpTool) Request(req *http.Request, header map[string]string) (body
 	if err != nil {
 		return
 	}
+	res.Body = ioutil.NopCloser(bytes.NewReader(body))
 	// 读取cookie
 	tool.Cookies = res.Cookies()
 	// 响应钩子
