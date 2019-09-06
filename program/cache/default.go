@@ -14,7 +14,7 @@ var (
 )
 
 func init() {
-	cli := cache.New(7*24*time.Hour, 10*time.Second)
+	cli := cache.New(30*time.Minute, 1*time.Minute)
 	DefaultMemCache = &MemCache{
 		cli: cli,
 	}
@@ -36,6 +36,9 @@ func (mem *MemCache) Get(key string) (val string, exist bool) {
 
 // Set 设置一个值
 func (mem *MemCache) Set(key, val string, expiration time.Duration) {
+	if expiration == 0 {
+		expiration = cache.NoExpiration
+	}
 	mem.cli.Set(key, val, expiration)
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 
 	"github.com/dop251/goja"
@@ -95,6 +96,7 @@ func (c *JsRes) Enable(runtime *goja.Runtime) {
 
 // NewJsRes 创建请求插件
 func NewJsRes(res *http.Response, httpTool *HttpTool, logger *TaskLog) *JsRes {
+	log.Println("创新响应对象 js中 ", res.StatusCode)
 	return &JsRes{
 		res:      res,
 		httpTool: httpTool,

@@ -3,6 +3,7 @@ package common
 import (
 	"bytes"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -74,7 +75,22 @@ func (tool *HttpTool) Request(req *http.Request, header map[string]string) (body
 	}
 	res.Body = ioutil.NopCloser(bytes.NewReader(body))
 	// 读取cookie
-	tool.Cookies = res.Cookies()
+	if len(res.Cookies()) > 0 {
+		cookies := make([]*http.Cookie, 0)
+		for _, c := range tool.Cookies {
+			exist := false
+			for _, c1 := range res.Cookies() {
+				if c.Name == c1.Name {
+					exist = true
+				}
+			}
+			if exist == false {
+				cookies = append(cookies, c)
+			}
+		}
+		cookies = append(cookies, res.Cookies()...)
+		tool.Cookies = cookies
+	}
 	// 响应钩子
 	tool.after(tool, res)
 	// http状态码
@@ -87,6 +103,7 @@ func (tool *HttpTool) Post(uri string, data string, header map[string]string, bo
 	url := tool.baseUrl + uri
 	payload := strings.NewReader(data)
 	req, err := http.NewRequest("POST", url, payload)
+	log.Println("请求参数", data)
 	if err != nil {
 		return
 	}

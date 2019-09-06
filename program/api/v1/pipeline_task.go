@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +16,8 @@ import (
 	"github.com/dop251/goja_nodejs/require"
 	gin "github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/oliveagle/jsonpath"
+	"github.com/shiguanghuxian/pipeline-test/program/cache"
 	"github.com/shiguanghuxian/pipeline-test/program/common"
 	"github.com/shiguanghuxian/pipeline-test/program/logger"
 	"github.com/shiguanghuxian/pipeline-test/program/models"
@@ -149,6 +154,9 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 	var body []byte
 	start := time.Now()
 
+	// 处理参数变量
+	pipelineTask.Req = api.ReqParamAnalysis(pipelineTask.Req, taskId, taskLog)
+
 	// 执行一个请求
 	if apiOne.Method == "POST" {
 		body, httpCode, err = httpTool.Post(apiOne.Uri, pipelineTask.Req, nil, 1)
@@ -162,8 +170,13 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 	}
 	end := time.Now()
 	if err != nil {
+		proper = false
 		return
 	}
+
+	// 存储接口响应数据，以背后用
+	cacheKey := fmt.Sprintf("%s:%d", taskId, pipelineTask.Id)
+	cache.DefaultMemCache.Set(cacheKey, string(body), 0)
 
 	// 预期验证逻辑
 	if pipelineTask.Expect == "" {
@@ -235,14 +248,13 @@ func (api *PipelineTaskController) runOneTask(httpTool *common.HttpTool, pipelin
 
 // 请求之前做一件事
 func (api *PipelineTaskController) caHttpBefore(vm *goja.Runtime, js string, taskLog *common.TaskLog) common.BeforeFunc {
-	if len(js) == 0 {
-		log.Println("调用请求之前钩子，js代码段为空")
-		return common.DefaultBeforeFunc
-	}
 	return func(tool *common.HttpTool, req *http.Request) {
 		// 构造js执行对象
 		jsReq := common.NewJsReq(req, tool, taskLog)
 		jsReq.Enable(vm)
+		if len(js) == 0 {
+			log.Println("调用请求之前钩子，js代码段为空")
+		}
 
 		v, err := vm.RunString(js)
 		if err != nil {
@@ -263,14 +275,13 @@ func (api *PipelineTaskController) caHttpBefore(vm *goja.Runtime, js string, tas
 
 // 请求之后做一件事
 func (api *PipelineTaskController) caHttpAfter(vm *goja.Runtime, js string, taskLog *common.TaskLog) common.AfterFunc {
-	if len(js) == 0 {
-		log.Println("调用请求之前钩子，js代码段为空")
-		return common.DefaultAfterFunc
-	}
-	return func(tool *common.HttpTool, req *http.Response) {
+	return func(tool *common.HttpTool, res *http.Response) {
 		// 构造js执行对象
-		jsRes := common.NewJsRes(req, tool, taskLog)
+		jsRes := common.NewJsRes(res, tool, taskLog)
 		jsRes.Enable(vm)
+		if len(js) == 0 {
+			log.Println("调用请求之前钩子，js代码段为空")
+		}
 
 		v, err := vm.RunString(js)
 		if err != nil {
@@ -287,6 +298,55 @@ func (api *PipelineTaskController) caHttpAfter(vm *goja.Runtime, js string, task
 			taskLog.Log(fmt.Sprintf("运行调用后钩子返回 %v", obj))
 		}
 	}
+}
+
+// ReqParamAnalysis 处理请求参数
+func (api *PipelineTaskController) ReqParamAnalysis(req string, taskId string, taskLog *common.TaskLog) string {
+	if req == "" {
+		return ""
+	}
+	var rex = regexp.MustCompile(`(\${[\w\. ]+})`)
+	newReq := rex.ReplaceAllStringFunc(req, func(inStr string) string {
+		// fmt.Println(inStr)
+		inStr = strings.TrimLeft(inStr, "${")
+		inStr = strings.TrimRight(inStr, "}")
+		inStr = strings.TrimSpace(inStr)
+		// 取第一个值为请求流id
+		idStr := inStr[:strings.Index(inStr, ".")]
+		id, _ := strconv.Atoi(idStr)
+		if id == 0 {
+			taskLog.Log("解析参数中变量错误，未指定参数获取参数流id")
+			return ""
+		}
+		// 替换变量
+		cacheKey := fmt.Sprintf("%s:%d", taskId, id)
+		body, exist := cache.DefaultMemCache.Get(cacheKey)
+		if exist == false {
+			taskLog.Log("解析参数中变量错误，指定参数流id不存在")
+			return ""
+		}
+		if body == "" {
+			taskLog.Log("解析参数中变量错误，指定参数流id body不存在")
+			return ""
+		}
+		var jsonData interface{}
+		err := json.Unmarshal([]byte(body), &jsonData)
+		if err != nil {
+			taskLog.Log("解析参数中变量错误，json解析错误" + err.Error())
+			return ""
+		}
+		pathKey := "$" + inStr[strings.Index(inStr, "."):]
+		log.Println(pathKey)
+		val, err := jsonpath.JsonPathLookup(jsonData, pathKey)
+		if err != nil {
+			taskLog.Log("解析参数中变量错误，jsonpath读取字段错误" + string(body) + " -- " + err.Error())
+			return ""
+		}
+
+		return fmt.Sprint(val)
+	})
+
+	return newReq
 }
 
 // WsConsumerData websocket 订阅日志消息
